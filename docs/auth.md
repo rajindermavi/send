@@ -1,4 +1,4 @@
-# `auth/` — Authentication & Token Acquisition
+# auth/ 
 
 ## Purpose
 

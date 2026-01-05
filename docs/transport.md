@@ -1,4 +1,4 @@
-
+# transport/
 
 transport/ is responsible for delivering fully-constructed email messages
 via provider-specific APIs (Microsoft Graph, Google).
