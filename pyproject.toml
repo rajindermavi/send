@@ -11,3 +11,8 @@ dependencies = [
     "pytest>=9.0.2",
     "requests>=2.32.5",
 ]
+
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["send*"]

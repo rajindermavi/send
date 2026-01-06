@@ -11,6 +11,9 @@ Useful Commands
     # Run Python files
     uv run python <PYTHON-FILE>
 
+    # Run tests
+    uv run pytest
+
 # Agent Instructions
 
 ## Guidelines
