@@ -4,7 +4,7 @@ from typing import Literal
 from send.transport.ms_graph_transport import GraphMailClient
 #from send.transport.google_api import GoogleMailClient
 
-Backend = Literal["ms_graph", "google_api", "dry_run"]
+from send.common.config import Backend
 
 def send(cfg: dict, msg: EmailMessage, backend: Backend, **kw) -> None:
     if backend == "ms_graph":
