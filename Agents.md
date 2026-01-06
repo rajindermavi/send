@@ -31,6 +31,7 @@ Before making any changes:
 ## Documentation
 - Update docs/ when behavior changes
 - Do not modify Design.md unless explicitly instructed
+- Add changes to changelog.md
 
 ## Uncertainty
 - If a change conflicts with Design.md, stop and ask
