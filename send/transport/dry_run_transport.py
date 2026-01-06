@@ -32,7 +32,7 @@ class DryRunTransport:
 
         self.out_dir.mkdir(parents=True, exist_ok=True)
 
-    def send_email(self, msg: EmailMessage) -> None:
+    def send_email_from_config(self, msg: EmailMessage,**kw) -> None:
         timestamp = datetime.now(timezone.utc)
         uid = uuid.uuid4().hex
 
