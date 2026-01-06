@@ -1,25 +1,41 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
+import base64
+import hashlib
 import json
+import os
 from typing import Any
 
 from cryptography.fernet import Fernet
 
-from paths import get_key_path, get_encrypted_config_path
+from send.credentials.models import KeyPolicy
+from send.credentials.paths import get_encrypted_config_path
+from send.runtime.context import get_runtime_context
+from send.runtime.paths import AppPaths, resolve_paths
 
 LIB_NAME = "SEND"
 KEYRING_SERVICE = LIB_NAME
 KEYRING_USERNAME = "config_key"
 
 class SecureConfig:
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        paths: AppPaths | None = None,
+        key_policy: KeyPolicy | None = None,
+        passphrase: str | bytes | None = None,
+    ):
         self._win32crypt: Any | None = None
         self._use_dpapi = self._init_dpapi()
         self._fernet: Fernet | None = None
         self._key_storage: str | None = None
-        self._log(f"Config path: {get_encrypted_config_path()}")
+        self._policy = key_policy or KeyPolicy()
+        self._passphrase = passphrase
+
+        self._paths = (paths or resolve_paths(get_runtime_context(app_name=LIB_NAME))).ensure()
+        self._config_path = get_encrypted_config_path(self._paths)
+
+        self._log(f"Config path: {self._config_path}")
         self._log(f"DPAPI enabled: {self._use_dpapi}")
 
     def _log(self, message: str) -> None:
@@ -85,43 +101,46 @@ class SecureConfig:
             self._fernet = Fernet(key)
         return self._fernet
 
+    def _derive_key_from_passphrase(self, passphrase: str | bytes) -> bytes:
+        if isinstance(passphrase, str):
+            passphrase_bytes = passphrase.encode("utf-8")
+        else:
+            passphrase_bytes = passphrase
+        salt = b"SEND_SECURECONFIG_V1"
+        derived = hashlib.pbkdf2_hmac(
+            "sha256",
+            passphrase_bytes,
+            salt,
+            390_000,
+            dklen=32,
+        )
+        return base64.urlsafe_b64encode(derived)
+
     def _load_or_generate_key(self) -> bytes:
         # Prefer OS keyring so secrets are not written to disk.
-        keyring_key = self._load_key_from_keyring()
+        keyring_key: bytes | None = None
+        if self._policy.prefer_keyring:
+            keyring_key = self._load_key_from_keyring()
         if keyring_key:
             return keyring_key
 
-        key_file = get_key_path()
-        if key_file.exists():
-            self._log(f"Loading key from file: {key_file}")
-            stored = key_file.read_bytes()
-            if os.name == "nt":
-                decrypted = self._dpapi_decrypt(stored)
-                if decrypted:
-                    self._log("Key file decrypted via DPAPI.")
-                    stored = decrypted
-            self._key_storage = "file"
-            return stored
-
-        key = Fernet.generate_key()
-        self._log("Generated new Fernet key.")
-        if self._save_key_to_keyring(key):
-            self._key_storage = "keyring"
-            return key
-
-        # Fallback to a file; on Windows try to DPAPI-protect the key bytes.
-        if os.name == "nt":
-            encrypted = self._dpapi_encrypt(key)
-            if encrypted is not None:
-                self._log(f"Writing DPAPI-protected key file: {key_file}")
-                key_file.write_bytes(encrypted)
-                self._key_storage = "file"
+        if self._policy.prefer_keyring:
+            key = Fernet.generate_key()
+            self._log("Generated new Fernet key.")
+            if self._save_key_to_keyring(key):
+                self._key_storage = "keyring"
                 return key
-            raise RuntimeError("Unable to protect encryption key on Windows (DPAPI/keyring unavailable).")
+            if not self._policy.allow_passphrase_fallback:
+                raise RuntimeError("Keyring unavailable and passphrase fallback disabled by policy.")
 
-        self._log(f"Writing key file: {key_file}")
-        key_file.write_bytes(key)
-        self._key_storage = "file"
+        if not self._policy.allow_passphrase_fallback:
+            raise RuntimeError("No valid key source available (keyring disabled and no passphrase allowed).")
+
+        if self._passphrase is None:
+            raise RuntimeError("Passphrase is required to derive encryption key when keyring cannot be used.")
+
+        key = self._derive_key_from_passphrase(self._passphrase)
+        self._key_storage = "passphrase"
         return key
 
     def _dpapi_decrypt(self, data: bytes) -> bytes | None:
@@ -153,7 +172,7 @@ class SecureConfig:
 
     def load(self) -> dict:
         """Decrypt and load the config from config.enc."""
-        cfg_file = get_encrypted_config_path()
+        cfg_file = self._config_path
         if not cfg_file.exists():
             return {}  # no config yet
 
@@ -181,7 +200,7 @@ class SecureConfig:
     def save(self, config_dict: dict) -> None:
         """Encrypt and save the config as JSON."""
         json_bytes = json.dumps(config_dict, indent=2).encode("utf-8")
-        cfg_file = get_encrypted_config_path()
+        cfg_file = self._config_path
 
         if self._use_dpapi:
             encrypted = self._dpapi_encrypt(json_bytes)
@@ -205,8 +224,8 @@ class SecureConfig:
             self._log("Config protected with Windows DPAPI; no separate key file used.")
         elif self._key_storage == "keyring":
             self._log("Encryption key stored in system keyring.")
-        elif self._key_storage == "file":
-            self._log("Encryption key stored alongside encrypted config file.")
+        elif self._key_storage == "passphrase":
+            self._log("Encryption key derived from user-supplied passphrase (not persisted).")
         else:
             self._log("Encryption key storage location unknown.")
         msg = "All data securely encrypted!"

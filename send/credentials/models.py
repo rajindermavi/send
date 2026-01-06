@@ -12,6 +12,7 @@ class MSalConfig:
     email_address: str
     client_id: str | None = None
     authority: MSAuthority = "organization"
+    username: str | None = None
 
     # SMTP
     smtp_host: str | None = None
@@ -28,11 +29,11 @@ class MSalConfig:
 
 @dataclass(slots=True)
 class GoogleAPIConfig:
-    host: str
-    port: int
-    
     email_address: str
     client_id: str | None = None
+    host: str = "gmail.googleapis.com"
+    port: int = 443
+    scopes: list[str] | None = None
 
     # Cached token state
     token_value: str | None = None
@@ -46,4 +47,4 @@ class TokenRecord:
 @dataclass(frozen=True)
 class KeyPolicy:
     prefer_keyring: bool = True
-    allow_passphrase_fallback: bool = False 
+    allow_passphrase_fallback: bool = False
