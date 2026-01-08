@@ -8,6 +8,7 @@ import warnings
 from send.auth import GoogleDeviceCodeTokenProvider, MSalDeviceCodeTokenProvider
 from send.credentials import GoogleAPIConfig, KeyPolicy, MSalConfig, SecureConfig
 from send.message.builder import EmailMessageBuilder
+from send.runtime.paths import resolve_dry_run_out_dir
 from send.transport.send import send as dispatch_send
 
 from send.common.config import Backend
@@ -22,12 +23,14 @@ class EmailClient:
         key_policy: Mapping[str, Any] | None = None,
         backend: Backend | None = None,
         passphrase: str | bytes | None = None,
+        out_dir: Path | None = None,
     ) -> None:
 
         self.msal_config: MSalConfig | None = None
         self.google_api_config: GoogleAPIConfig | None = None
         self.backend: Backend | None = None
         self._passphrase = passphrase
+        self._out_dir = Path(out_dir) if out_dir is not None else resolve_dry_run_out_dir()
 
         self.key_policy: KeyPolicy = self.update_key_policy(key_policy)
         self.secure_config = SecureConfig(
@@ -113,7 +116,7 @@ class EmailClient:
             prefer_keyring = True
         allow_passphrase_fallback = self._coerce_bool(data.get("allow_passphrase_fallback"))
         if allow_passphrase_fallback is None:
-            allow_passphrase_fallback = False
+            allow_passphrase_fallback = True
 
         self.key_policy = KeyPolicy(
             prefer_keyring=prefer_keyring,
@@ -367,7 +370,7 @@ class EmailClient:
         cfg = self._store_config()
 
         # Acquire tokens (no-op + warning for dry_run).
-        self.device_code(
+        access_token = self.device_code(
             interactive=interactive,
             scopes=scopes,
             show_message=show_message,
@@ -377,9 +380,9 @@ class EmailClient:
             cfg,
             message,
             self.backend,
-            interactive=interactive,
-            secure_config=self.secure_config,
             write_metadata=write_metadata,
+            out_dir=self._out_dir,
+            access_token=access_token,
         )
 
         return message

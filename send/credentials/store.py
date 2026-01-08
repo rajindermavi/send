@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
+import getpass
 import hashlib
 import json
 import os
+import sys
 from typing import Any
 
 from cryptography.fernet import Fernet
@@ -31,6 +33,12 @@ class SecureConfig:
         self._key_storage: str | None = None
         self._policy = key_policy or KeyPolicy()
         self._passphrase = passphrase
+        self._warned_keyring_unavailable = False
+        self._keyring_available = False
+        if self._policy.prefer_keyring:
+            self._keyring_available, keyring_reason = self._check_keyring_available()
+            if not self._keyring_available:
+                self._enable_passphrase_fallback(keyring_reason)
 
         self._paths = (paths or resolve_paths(get_runtime_context(app_name=LIB_NAME))).ensure()
         self._config_path = get_encrypted_config_path(self._paths)
@@ -40,6 +48,41 @@ class SecureConfig:
 
     def _log(self, message: str) -> None:
         print(f"[SecureConfig] {message}")
+
+    def _check_keyring_available(self) -> tuple[bool, str]:
+        try:
+            import keyring  # type: ignore
+        except Exception:
+            return False, "keyring module not available"
+        try:
+            backend = keyring.get_keyring()
+        except Exception:
+            return False, "keyring backend unavailable"
+        try:
+            priority = getattr(backend, "priority", None)
+        except Exception:
+            return False, "keyring backend unavailable"
+        if priority is not None and priority <= 0:
+            return False, "no recommended keyring backend"
+        if not hasattr(backend, "get_password") or not hasattr(backend, "set_password"):
+            return False, "keyring backend missing required methods"
+        return True, ""
+
+    def _enable_passphrase_fallback(self, reason: str) -> None:
+        if not self._warned_keyring_unavailable:
+            reason_text = f" ({reason})" if reason else ""
+            self._log(f"WARNING: Keyring unavailable{reason_text}; enabling passphrase fallback.")
+            self._warned_keyring_unavailable = True
+        if not self._policy.allow_passphrase_fallback:
+            self._policy = KeyPolicy(
+                prefer_keyring=self._policy.prefer_keyring,
+                allow_passphrase_fallback=True,
+            )
+
+    def _disable_keyring(self, reason: str) -> None:
+        self._keyring_available = False
+        if self._policy.prefer_keyring:
+            self._enable_passphrase_fallback(reason)
 
     def _init_dpapi(self) -> bool:
         """
@@ -56,10 +99,12 @@ class SecureConfig:
         return True
 
     def _get_keyring(self):
+        if not self._keyring_available:
+            return None
         try:
             import keyring  # type: ignore
         except Exception:
-            self._log("Keyring module not available; will skip keyring.")
+            self._disable_keyring("keyring module not available")
             return None
         return keyring
 
@@ -70,7 +115,7 @@ class SecureConfig:
         try:
             stored = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
         except Exception:
-            self._log("Keyring lookup failed; continuing without keyring.")
+            self._disable_keyring("keyring lookup failed")
             return None
         if not stored:
             self._log("No key found in keyring.")
@@ -80,7 +125,7 @@ class SecureConfig:
             self._key_storage = "keyring"
             return stored.encode("utf-8")
         except Exception:
-            self._log("Key from keyring could not be decoded; ignoring.")
+            self._disable_keyring("keyring data could not be decoded")
             return None
 
     def _save_key_to_keyring(self, key: bytes) -> bool:
@@ -92,7 +137,7 @@ class SecureConfig:
             self._log("Saved key to keyring.")
             return True
         except Exception:
-            self._log("Failed to save key to keyring.")
+            self._disable_keyring("keyring write failed")
             return False
 
     def _ensure_fernet(self) -> Fernet:
@@ -116,15 +161,29 @@ class SecureConfig:
         )
         return base64.urlsafe_b64encode(derived)
 
+    def _get_passphrase(self) -> str | bytes | None:
+        if self._passphrase is not None:
+            return self._passphrase
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            return None
+        try:
+            entered = getpass.getpass("Enter passphrase to encrypt credentials: ")
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if not entered:
+            return None
+        self._passphrase = entered
+        return self._passphrase
+
     def _load_or_generate_key(self) -> bytes:
         # Prefer OS keyring so secrets are not written to disk.
         keyring_key: bytes | None = None
-        if self._policy.prefer_keyring:
+        if self._policy.prefer_keyring and self._keyring_available:
             keyring_key = self._load_key_from_keyring()
         if keyring_key:
             return keyring_key
 
-        if self._policy.prefer_keyring:
+        if self._policy.prefer_keyring and self._keyring_available:
             key = Fernet.generate_key()
             self._log("Generated new Fernet key.")
             if self._save_key_to_keyring(key):
@@ -136,10 +195,11 @@ class SecureConfig:
         if not self._policy.allow_passphrase_fallback:
             raise RuntimeError("No valid key source available (keyring disabled and no passphrase allowed).")
 
-        if self._passphrase is None:
+        passphrase = self._get_passphrase()
+        if passphrase is None:
             raise RuntimeError("Passphrase is required to derive encryption key when keyring cannot be used.")
 
-        key = self._derive_key_from_passphrase(self._passphrase)
+        key = self._derive_key_from_passphrase(passphrase)
         self._key_storage = "passphrase"
         return key
 

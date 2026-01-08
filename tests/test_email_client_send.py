@@ -74,8 +74,8 @@ def test_send_runs_device_code_and_dispatch(monkeypatch, tmp_path):
     assert isinstance(dispatch["msg"], EmailMessage)
     assert dispatch["cfg"].get("backend") == "ms_graph"
     assert dispatch["cfg"].get("ms_email_address") == "ms-user@example.com"
-    assert dispatch["kwargs"]["interactive"] is False
-    assert dispatch["kwargs"]["secure_config"] is client.secure_config
+    assert dispatch["kwargs"]["write_metadata"] is True
+    assert dispatch["kwargs"]["access_token"] == "token-xyz"
 
     assert client.secure_config.saved  # config persisted
 
@@ -120,3 +120,36 @@ def test_send_dry_run_supports_custom_from(monkeypatch, tmp_path):
     assert msg["From"] == "custom@example.com"
     assert called["kwargs"]["write_metadata"] is False
     assert called["cfg"].get("backend") == "dry_run"
+
+
+def test_send_dry_run_writes_eml_and_metadata(monkeypatch, tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    monkeypatch.setenv("OUTBOX_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "send.runtime.paths.user_runtime_dir",
+        lambda *args, **kwargs: str(runtime_dir),
+    )
+
+    client = EmailClient(
+        backend="dry_run",
+        key_policy={"prefer_keyring": False, "allow_passphrase_fallback": True},
+        passphrase="pw",
+    )
+    client.secure_config = DummySecureConfig()
+
+    with pytest.warns(RuntimeWarning):
+        client.send(
+            from_address="dryrun@example.com",
+            to="dest@example.com",
+            subject="Dry run output",
+            body_text="preview",
+        )
+
+    out_dir = runtime_dir / "dry_run"
+    eml_files = list(out_dir.glob("*.eml"))
+    meta_files = list(out_dir.glob("*.json"))
+
+    assert len(eml_files) == 1
+    assert len(meta_files) == 1
+    assert eml_files[0].stem == meta_files[0].stem

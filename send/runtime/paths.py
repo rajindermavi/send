@@ -8,6 +8,7 @@ from platformdirs import (
     user_config_dir,
     user_log_dir,
     user_state_dir,
+    user_runtime_dir,
 )
 
 from .context import RuntimeContext
@@ -53,3 +54,7 @@ def resolve_paths(ctx: RuntimeContext) -> AppPaths:
     logs_dir   = logs_base  # typically not per-profile, but you can if you want
 
     return AppPaths(config_dir, state_dir, cache_dir, logs_dir)
+
+
+def resolve_dry_run_out_dir() -> Path:
+    return Path(user_runtime_dir("send")) / "dry_run"

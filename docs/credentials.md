@@ -146,7 +146,7 @@ Defines **which of the two supported key strategies is allowed**.
 Typical fields:
 
 - `prefer_keyring: bool`
-- `allow_user_key: bool`
+- `allow_passphrase_fallback: bool`
 
 `KeyPolicy` is declarative only.  
 It does **not** store keys or perform encryption.
@@ -193,7 +193,7 @@ Then:
 If:
 
 - `prefer_keyring == False` **or** keyring access fails
-- `allow_user_key == True`
+- `allow_passphrase_fallback == True`
 
 Then:
 
@@ -209,14 +209,15 @@ Then:
 If:
 
 - Keyring usage is disallowed or unavailable **and**
-- User-supplied keys are disallowed
+- Passphrase fallback is disallowed
 
 Then:
 
 - `SecureConfig` raises an explicit error
 - No data is written
 
-There is **no silent fallback**.
+There is **no silent fallback**. If keyring is unavailable, passphrase fallback
+is enabled with a warning so first-run does not fail silently.
 
 ---
 

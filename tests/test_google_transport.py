@@ -60,30 +60,16 @@ def test_google_transport_raises_on_http_error(monkeypatch):
         transport.send_email(msg)
 
 
-def test_connect_with_oauth_uses_provider_and_config(monkeypatch):
-    class FakeProvider:
-        def __init__(self) -> None:
-            self.interactive = None
-            self.scopes = None
-
-        def acquire_token(self, interactive=True, scopes=None):
-            self.interactive = interactive
-            self.scopes = scopes
-            return "token-xyz"
-
+def test_connect_with_oauth_uses_access_token_and_config():
     cfg = {
         "google_email_address": "user@example.com",
-        "google_client_id": "client-1",
         "google_api_config": {
             "host": "example.googleapis.com",
-            "scopes": ["scope-a", "scope-b"],
         },
     }
 
-    provider = FakeProvider()
-    transport = GoogleTransport.connect_with_oauth(cfg, token_provider=provider, interactive=False)
+    transport = GoogleTransport.connect_with_oauth(cfg, access_token="token-xyz")
 
-    assert provider.interactive is False
-    assert provider.scopes == ["scope-a", "scope-b"]
     assert isinstance(transport, GoogleTransport)
     assert transport._host == "example.googleapis.com"
+    assert transport._from_address == "user@example.com"

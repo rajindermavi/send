@@ -3,12 +3,9 @@ from __future__ import annotations
 import inspect
 import requests
 import base64
-from typing import Optional, Dict
+from typing import Dict
 from email.message import EmailMessage
 from email.utils import getaddresses
-
-from send.auth.msal_device_code import MSalDeviceCodeTokenProvider
-from send.credentials.store import SecureConfig
 
 from send.logging import get_logger
 
@@ -16,7 +13,6 @@ logger = get_logger(__name__)
 
 class MSGraphTransport:
     GRAPH_SENDMAIL_URL = "https://graph.microsoft.com/v1.0/me/sendMail"
-    GRAPH_MAIL_SCOPES = ["https://graph.microsoft.com/Mail.Send"]
 
     def __init__(self, access_token: str, from_address: str) -> None:
         self._access_token = access_token
@@ -58,53 +54,27 @@ class MSGraphTransport:
     def connect_with_oauth(
         cls,
         cfg: Dict,
-        token_provider: Optional[MSalDeviceCodeTokenProvider] = None,
-        interactive: bool = True,
-        secure_config: SecureConfig | None = None,
+        *,
+        access_token: str | None = None,
     ) -> "MSGraphTransport":
         """
         Create and return an MSGraphTransport using OAuth2.
 
-        - Acquires an access token (silent + optional device-code interactive).
         - Prepares Graph sendMail client.
         - Raises RuntimeError if token or config is invalid.
 
         Usage:
 
-            with MSGraphTransport.connect_with_oauth(cfg, token_provider) as graph:
+            with MSGraphTransport.connect_with_oauth(cfg, access_token=token) as graph:
                 graph.send_email(msg)
         """
-        authority_value = cfg.get("ms_authority") if isinstance(cfg, dict) else None
-        client_id_value = None
-        if isinstance(cfg, dict):
-            client_id_value = cfg.get("client_id")
-            if not client_id_value:
-                msal_cfg = cfg.get("msal_config")
-                if isinstance(msal_cfg, dict):
-                    client_id_value = msal_cfg.get("client_id")
+        if not access_token:
+            raise ValueError("MS Graph send requires an access_token.")
 
-        if token_provider is None:
-            token_provider = MSalDeviceCodeTokenProvider(
-                secure_config=secure_config,
-                authority=authority_value,
-                client_id=client_id_value,
-            )
-        elif authority_value:
-            token_provider.set_authority(authority_value)
-            if client_id_value and not getattr(token_provider, "client_id", None):
-                token_provider.client_id = client_id_value
-
-        from_address = cfg.get("ms_email_address") or getattr(
-            token_provider, "ms_username", None
-        )
+        from_address = cfg.get("ms_email_address")
 
         if not from_address:
             raise ValueError("MS email address is required to send mail via Graph.")
-
-        access_token = token_provider.acquire_token(
-            interactive=interactive,
-            scopes=cls.GRAPH_MAIL_SCOPES,
-        )
 
         return cls(
             access_token=access_token,
@@ -116,9 +86,8 @@ class MSGraphTransport:
         cls,
         cfg: Dict,
         msg: EmailMessage,
-        token_provider: Optional[MSalDeviceCodeTokenProvider] = None,
-        interactive: bool = True,
-        secure_config: SecureConfig | None = None,
+        *,
+        access_token: str | None = None,
     ) -> None:
         """
         Convenience wrapper:
@@ -135,9 +104,7 @@ class MSGraphTransport:
 
         with cls.connect_with_oauth(
             cfg,
-            token_provider,
-            interactive=interactive,
-            secure_config=secure_config,
+            access_token=access_token,
         ) as graph:
             graph.send_email(msg)
 

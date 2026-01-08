@@ -3,12 +3,10 @@ from __future__ import annotations
 import base64
 from email.message import EmailMessage
 from email.parser import BytesParser
-from typing import Any, Dict, Optional
+from typing import Dict
 
 import requests
 
-from send.auth.google_device_code import DEFAULT_SCOPES, GoogleDeviceCodeTokenProvider
-from send.credentials.store import SecureConfig
 from send.logging import get_logger
 
 logger = get_logger(__name__)
@@ -63,32 +61,18 @@ class GoogleTransport:
     def connect_with_oauth(
         cls,
         cfg: Dict,
-        token_provider: Optional[GoogleDeviceCodeTokenProvider] = None,
-        interactive: bool = True,
-        secure_config: SecureConfig | None = None,
+        *,
+        access_token: str | None = None,
     ) -> "GoogleTransport":
         google_cfg = cfg.get("google_api_config") if isinstance(cfg, dict) else None
         email_address = cls._extract_email(cfg, google_cfg)
-        client_id = cls._extract_client_id(cfg, google_cfg)
-        client_secret = cls._extract_client_secret(cfg, google_cfg)
-        scopes = cls._extract_scopes(cfg, google_cfg) or DEFAULT_SCOPES
         host = cls._extract_host(cfg, google_cfg)
 
         if not email_address:
             raise ValueError("Google email address is required to send mail via Gmail API.")
 
-        if token_provider is None:
-            token_provider = GoogleDeviceCodeTokenProvider(
-                secure_config=secure_config,
-                client_id=client_id,
-                client_secret=client_secret,
-                scopes=scopes,
-            )
-
-        access_token = token_provider.acquire_token(
-            interactive=interactive,
-            scopes=scopes,
-        )
+        if not access_token:
+            raise ValueError("Google API send requires an access_token.")
 
         return cls(
             access_token=access_token,
@@ -101,18 +85,15 @@ class GoogleTransport:
         cls,
         cfg: Dict,
         msg: EmailMessage,
-        token_provider: Optional[GoogleDeviceCodeTokenProvider] = None,
-        interactive: bool = True,
-        secure_config: SecureConfig | None = None,
+        *,
+        access_token: str | None = None,
     ) -> None:
         if not cfg:
             raise ValueError("Missing configuration for Google API send.")
 
         transport = cls.connect_with_oauth(
             cfg,
-            token_provider,
-            interactive=interactive,
-            secure_config=secure_config,
+            access_token=access_token,
         )
         transport.send_email(msg)
 
@@ -128,45 +109,6 @@ class GoogleTransport:
             if nested:
                 return str(nested)
         return None
-
-    @staticmethod
-    def _extract_client_id(cfg: Dict, google_cfg: dict | None) -> str | None:
-        if not isinstance(cfg, dict):
-            return None
-        client_id = cfg.get("google_client_id") or cfg.get("client_id")
-        if client_id:
-            return str(client_id)
-        if isinstance(google_cfg, dict):
-            nested = google_cfg.get("client_id")
-            if nested:
-                return str(nested)
-        return None
-
-    @staticmethod
-    def _extract_client_secret(cfg: Dict, google_cfg: dict | None) -> str | None:
-        if not isinstance(cfg, dict):
-            return None
-        secret = cfg.get("google_client_secret")
-        if secret:
-            return str(secret)
-        if isinstance(google_cfg, dict):
-            nested = google_cfg.get("client_secret")
-            if nested:
-                return str(nested)
-        return None
-
-    @staticmethod
-    def _extract_scopes(cfg: Dict, google_cfg: dict | None) -> list[str] | None:
-        scopes: Any = None
-        if isinstance(cfg, dict):
-            scopes = cfg.get("scopes")
-        if scopes is None and isinstance(google_cfg, dict):
-            scopes = google_cfg.get("scopes")
-        if scopes is None:
-            return None
-        if isinstance(scopes, str):
-            scopes = [scope.strip() for scope in scopes.split(" ") if scope.strip()]
-        return [str(scope) for scope in scopes if scope]
 
     @classmethod
     def _extract_host(cls, cfg: Dict, google_cfg: dict | None) -> str:
